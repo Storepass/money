@@ -1,6 +1,6 @@
 {
 	"name": "@storepass/money",
-	"version": "0.3.0",
+	"version": "0.3.1",
 	"description": "Money primitive library",
 	"main": "./dist/index.cjs",
 	"module": "./dist/index.mjs",
@@ -46,11 +46,11 @@
 	"author": "darling (https://github.com/darling)",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/Atlas-Alpha/sp-money"
+		"url": "git+https://github.com/Storepass/money.git"
 	},
-	"homepage": "https://github.com/Atlas-Alpha/sp-money#readme",
+	"homepage": "https://github.com/Storepass/money#readme",
 	"bugs": {
-		"url": "https://github.com/Atlas-Alpha/sp-money/issues"
+		"url": "https://github.com/Storepass/money/issues"
 	},
 	"keywords": [
 		"money",
