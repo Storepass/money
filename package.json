@@ -1,6 +1,6 @@
 {
 	"name": "@storepass/money",
-	"version": "0.3.0",
+	"version": "0.3.1",
 	"description": "Money primitive library",
 	"main": "./dist/index.cjs",
 	"module": "./dist/index.mjs",
