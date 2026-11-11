@@ -342,3 +342,23 @@ describe("Money.roundTo static method", () => {
 		expect(rounded.toNumber()).toBe(1.0);
 	});
 });
+
+describe('"round" mode resolves exact halves toward +Infinity', () => {
+	test.each([
+		[5, 3],
+		[-5, -2],
+		[15, 8],
+		[-15, -7],
+	])("%p × 50%% → %p", (minor, expected) => {
+		expect(Money.fromMinor(Currency.USD, minor).percentOf(50).toMinor()).toBe(
+			expected,
+		);
+	});
+
+	test("fromNumber and round follow the same rule", () => {
+		expect(Money.fromNumber(Currency.USD, 0.025).toMinor()).toBe(3);
+		expect(Money.fromNumber(Currency.USD, -0.025).toMinor()).toBe(-2);
+		expect(Money.fromMinor(Currency.USD, 125).round(0.1).toMinor()).toBe(130);
+		expect(Money.fromMinor(Currency.USD, -125).round(0.1).toMinor()).toBe(-120);
+	});
+});
