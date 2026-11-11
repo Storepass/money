@@ -59,6 +59,44 @@ export const Currency = {
 export type CurrencyCode = keyof typeof Currency;
 export type CurrencyType = (typeof Currency)[CurrencyCode];
 
+export interface ResolveCurrencyOptions {
+	/**
+	 * When set, an unknown code resolves to `defineCurrency(code, fallbackDecimalPlaces)`
+	 * instead of `undefined`. The definition is cached, so repeated calls with
+	 * the same code and decimal places return the same object.
+	 */
+	fallbackDecimalPlaces?: number;
+}
+
+const builtInCurrencies = new Map<string, CurrencyDefinition>(
+	Object.entries(Currency),
+);
+const fallbackCurrencies = new Map<string, CurrencyDefinition>();
+
+/**
+ * Looks up a currency definition by code. A built-in code returns the same
+ * object as `Currency[code]`; an unknown code returns `undefined` unless
+ * `fallbackDecimalPlaces` is given.
+ */
+export function resolveCurrency(
+	code: string,
+	options: ResolveCurrencyOptions = {},
+): CurrencyDefinition | undefined {
+	const builtIn = builtInCurrencies.get(code);
+	if (builtIn !== undefined) return builtIn;
+
+	const { fallbackDecimalPlaces } = options;
+	if (fallbackDecimalPlaces === undefined) return undefined;
+
+	const key = `${code}:${fallbackDecimalPlaces}`;
+	let definition = fallbackCurrencies.get(key);
+	if (definition === undefined) {
+		definition = defineCurrency(code, fallbackDecimalPlaces);
+		fallbackCurrencies.set(key, definition);
+	}
+	return definition;
+}
+
 export interface DefineCurrencyOptions {
 	numericCode?: number;
 	iso4217?: boolean;

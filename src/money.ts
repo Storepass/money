@@ -1,5 +1,14 @@
 import type { CurrencyDefinition } from "./currency";
 
+/**
+ * How a value between two minor units is resolved.
+ *
+ * - `"floor"`: toward -Infinity.
+ * - `"ceil"`: toward +Infinity.
+ * - `"trunc"`: toward zero.
+ * - `"round"`: to the nearest minor unit; an exact half goes toward
+ *   +Infinity, so 2.5 becomes 3 and -2.5 becomes -2 (not half away from zero).
+ */
 export type RoundingMode = "floor" | "ceil" | "round" | "trunc";
 
 export interface FromNumberOptions {
@@ -96,22 +105,23 @@ function parseDecimalStringToScaled(str: string): bigint {
 	return negative ? -result : result;
 }
 
-function roundScaledToMinor(
-	scaled: bigint,
-	targetDecimalPlaces: number,
+function divideAndRound(
+	dividend: bigint,
+	divisor: bigint,
 	mode: RoundingMode,
 ): bigint {
-	const targetScale = 10n ** BigInt(targetDecimalPlaces);
-	const divisor = INTERNAL_SCALE / targetScale;
+	if (divisor < 0n) {
+		dividend = -dividend;
+		divisor = -divisor;
+	}
 
-	const quotient = scaled / divisor;
-	const remainder = scaled % divisor;
+	const quotient = dividend / divisor;
+	const remainder = dividend % divisor;
 
 	if (remainder === 0n) return quotient;
 
-	const isNegative = scaled < 0n;
-	const absRemainder = isNegative ? -remainder : remainder;
-	const halfDivisor = divisor / 2n;
+	const isNegative = dividend < 0n;
+	const doubledRemainder = (isNegative ? -remainder : remainder) * 2n;
 
 	switch (mode) {
 		case "floor":
@@ -121,10 +131,10 @@ function roundScaledToMinor(
 		case "trunc":
 			return quotient;
 		default:
-			// Round half away from zero
+			// Round to nearest, half toward +Infinity
 			if (
-				absRemainder > halfDivisor ||
-				(absRemainder === halfDivisor && !isNegative)
+				doubledRemainder > divisor ||
+				(doubledRemainder === divisor && !isNegative)
 			) {
 				return isNegative ? quotient - 1n : quotient + 1n;
 			}
@@ -132,12 +142,28 @@ function roundScaledToMinor(
 	}
 }
 
+function roundScaledToMinor(
+	scaled: bigint,
+	targetDecimalPlaces: number,
+	mode: RoundingMode,
+): bigint {
+	const targetScale = 10n ** BigInt(targetDecimalPlaces);
+	return divideAndRound(scaled, INTERNAL_SCALE / targetScale, mode);
+}
+
+function currenciesMatch(
+	a: CurrencyDefinition,
+	b: CurrencyDefinition,
+): boolean {
+	return a.code === b.code && a.decimalPlaces === b.decimalPlaces;
+}
+
 function assertCurrenciesMatch(
 	a: CurrencyDefinition,
 	b: CurrencyDefinition,
 	operation: string,
 ): void {
-	if (a.code !== b.code || a.decimalPlaces !== b.decimalPlaces) {
+	if (!currenciesMatch(a, b)) {
 		throw new Error(
 			`Cannot ${operation} ${a.code} and ${b.code}: currency mismatch`,
 		);
@@ -249,6 +275,10 @@ export class Money {
 		return new Money(BigInt(minor), currency);
 	}
 
+	static zero(currency: CurrencyDefinition): Money {
+		return new Money(0n, currency);
+	}
+
 	toNumber(): number {
 		const divisor = 10 ** this.#currency.decimalPlaces;
 		return Number(this.#minor) / divisor;
@@ -274,14 +304,21 @@ export class Money {
 		return new Money(result, a.#currency);
 	}
 
-	static sum(items: Money[]): Money {
-		const first = items[0];
-		if (first === undefined) {
-			throw new Error(
-				"Cannot sum empty array: at least one Money value required",
-			);
+	/**
+	 * Adds every item. Without `currency`, the list must be non-empty and the
+	 * first item sets the currency. With `currency`, an empty list returns
+	 * `Money.zero(currency)` and every item must match `currency`.
+	 */
+	static sum(items: readonly Money[], currency?: CurrencyDefinition): Money {
+		if (currency === undefined) {
+			const first = items[0];
+			if (first === undefined) {
+				throw new Error(
+					"Cannot sum empty array: at least one Money value required",
+				);
+			}
+			currency = first.#currency;
 		}
-		const currency = first.#currency;
 		let total = 0n;
 		for (const item of items) {
 			assertCurrenciesMatch(item.#currency, currency, "sum");
@@ -289,6 +326,20 @@ export class Money {
 		}
 		assertSafeResult(total);
 		return new Money(total, currency);
+	}
+
+	/**
+	 * True when every item's currency matches `currency` (or the first item's
+	 * currency when omitted), using the same rule as arithmetic: equal `code`
+	 * and `decimalPlaces`. An empty list is true.
+	 */
+	static sameCurrency(
+		items: readonly Money[],
+		currency?: CurrencyDefinition,
+	): boolean {
+		const target = currency ?? items[0]?.currency;
+		if (target === undefined) return true;
+		return items.every((item) => currenciesMatch(item.#currency, target));
 	}
 
 	// Static comparison methods
@@ -516,6 +567,50 @@ export class Money {
 
 	round(increment: number, mode?: RoundingMode): Money {
 		return Money.roundTo(this, increment, mode);
+	}
+
+	// Ratio scaling
+
+	/**
+	 * Returns `money × numerator ÷ denominator` in `money`'s currency, computed
+	 * exactly on minor units with a single rounding (default `"round"`).
+	 *
+	 * The ratio is dimensionless: `numerator` and `denominator` must share a
+	 * currency with each other, but not with `money`. Throws when the
+	 * denominator is zero, when the ratio's currencies differ, or when the
+	 * result exceeds the safe integer range.
+	 */
+	static scaleByRatio(
+		money: Money,
+		numerator: Money,
+		denominator: Money,
+		options: { rounding?: RoundingMode } = {},
+	): Money {
+		assertCurrenciesMatch(
+			numerator.#currency,
+			denominator.#currency,
+			"form a ratio from",
+		);
+		if (denominator.#minor === 0n) {
+			throw new Error("Cannot scale by a ratio with a zero denominator");
+		}
+
+		const { rounding = "round" } = options;
+		const resultMinor = divideAndRound(
+			money.#minor * numerator.#minor,
+			denominator.#minor,
+			rounding,
+		);
+		assertSafeResult(resultMinor);
+		return new Money(resultMinor, money.#currency);
+	}
+
+	scaleByRatio(
+		numerator: Money,
+		denominator: Money,
+		options?: { rounding?: RoundingMode },
+	): Money {
+		return Money.scaleByRatio(this, numerator, denominator, options);
 	}
 
 	// Percent operations

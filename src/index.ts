@@ -5,6 +5,8 @@ export {
 	type CurrencyType,
 	type DefineCurrencyOptions,
 	defineCurrency,
+	type ResolveCurrencyOptions,
+	resolveCurrency,
 } from "./currency";
 export {
 	type FromNumberOptions,

@@ -60,6 +60,11 @@ const diff = a.subtract(b); // 7.5
 
 Money.compare(a, b); // 1
 Money.greaterThan(a, b); // true
+
+Money.zero(Currency.USD); // $0.00
+Money.sum([], Currency.USD); // $0.00; without a currency, an empty list throws
+Money.sum([a, b], Currency.USD); // 12.5; every item must be USD
+Money.sameCurrency([a, b], Currency.USD); // true; never throws
 ```
 
 ### Allocation
@@ -92,6 +97,26 @@ subtotal.incrementByPercent(8.25).toNumber(); // 108.25
 subtotal.decrementByPercent(10).toNumber(); // 90
 ```
 
+### Ratio scaling
+
+`scaleByRatio` multiplies by `numerator ÷ denominator` exactly on BigInt minor
+units and rounds once. Use it instead of turning a ratio into a float percent.
+The ratio's two values must share a currency with each other, but not with the
+value being scaled.
+
+```ts
+const value = Money.fromMinor(Currency.USD, 123456789);
+const one = Money.fromMinor(Currency.EUR, 1);
+const six = Money.fromMinor(Currency.EUR, 6);
+
+value.scaleByRatio(one, six); // 20576132 minor units (exact 20576131.5, rounded once)
+value.scaleByRatio(one, six, { rounding: "floor" }); // 20576131
+Money.scaleByRatio(value, one, six); // static form
+```
+
+It throws on a zero denominator, when the ratio's currencies differ, and when
+the result exceeds the safe integer range.
+
 ### Custom currencies
 
 ```ts
@@ -99,6 +124,18 @@ import { defineCurrency, Money } from "@storepass/money";
 
 const XAU = defineCurrency("XAU", 4);
 const gold = Money.fromNumber(XAU, 1.2345);
+```
+
+`resolveCurrency` looks a definition up by code. A built-in code returns the
+same object as `Currency[code]`; an unknown code returns `undefined`, or, with
+`fallbackDecimalPlaces`, a cached `defineCurrency(code, fallbackDecimalPlaces)`.
+
+```ts
+import { resolveCurrency } from "@storepass/money";
+
+resolveCurrency("USD"); // Currency.USD
+resolveCurrency("XYZ"); // undefined
+resolveCurrency("XYZ", { fallbackDecimalPlaces: 2 }); // same object on every call
 ```
 
 ### Serialization
@@ -192,7 +229,11 @@ and update both `decimalPlaces` and `numericCode` for any drift.
 
 - Currency mismatch operations throw (for example, adding USD to EUR).
 - Results that exceed JavaScript safe integer range throw.
-- Rounding modes supported: `"floor" | "ceil" | "round" | "trunc"`.
+- Rounding modes supported: `"floor" | "ceil" | "round" | "trunc"`. `"floor"`
+  goes toward -Infinity, `"ceil"` toward +Infinity, and `"trunc"` toward zero.
+  `"round"` (the default) goes to the nearest minor unit and resolves an exact
+  half toward +Infinity: 2.5 becomes 3 and -2.5 becomes -2. It is not half away
+  from zero.
 - `Money` instances are immutable; operations return new instances.
 
 ## Development
